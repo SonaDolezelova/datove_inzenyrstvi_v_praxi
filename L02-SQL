@@ -1,0 +1,100 @@
+--L02 - pořadí tabulek podle Světlaniny prezentace k L02
+--L02_branch
+
+
+CREATE OR REPLACE VIEW `L02.L02_branch` AS
+SELECT
+  branch_id
+  ,branch_name
+FROM `L01.L01_branch`
+--✅branch_name nesmí být neznámé (unknown)
+WHERE branch_name != 'unknown'
+;
+
+--L02_contract
+CREATE OR REPLACE VIEW `L02.L02_contract` AS
+SELECT
+  contract_id
+  ,branch_id
+  ,contract_valid_from
+  ,contract_valid_to
+  ,registred_date
+  ,signed_date
+  ,activation_process_date
+  ,prolongation_date
+  ,registration_end_reason
+  ,flag_prolongation
+  ,flag_send_email
+  ,contract_status
+FROM `L01.L01_contract`
+--✅smlouva je uzavřená, když je registered_date vyplněný (není nula)
+WHERE registred_date IS NOT NULL
+;
+
+--L02_invoice
+CREATE OR REPLACE VIEW `L02.L02_invoice` AS
+SELECT 
+  invoice.invoice_id
+  ,invoice.contract_id
+  ,invoice.date_issue
+  ,invoice.due_date
+  ,invoice.paid_date
+  ,invoice.start_date
+  ,invoice.end_date
+  ,invoice.amount_w_vat
+  ,invoice.return_w_vat
+  --✅pokud je částka s DPH menší nebo rovna 0, pak je výsledek 0; pokud je částka s DPH kladná, tak dopočítat 20% DPH
+  ,CASE
+    WHEN invoice.amount_w_vat <= 0 THEN 0
+    WHEN invoice.amount_w_vat > 0 THEN amount_w_vat / 1.2
+    END AS amount_wo_vat_usd
+  ,invoice.insert_date
+  ,invoice.update_date
+  --✅každá faktura má pořadí v rámci smlouvy (contract_id) podle data vystavení (date_issue)
+ ,ROW_NUMBER() OVER (PARTITION BY invoice.contract_id ORDER BY invoice.date_issue ASC) AS invoice_order
+--✅napojení tabulky invoice na tabulku contract (ke každé faktuře budou doplněna data ze smlouvy, se kterou souvisí)
+FROM `L01.L01_invoice` invoice
+ INNER JOIN `L01.L01_contract` contract
+   ON invoice.contract_id = contract.contract_id
+--✅zajímají nás jen faktury (invoice_type je jen invoice), které byly vystaveny (flaf_invoice_issued je TRUE)
+WHERE invoice.invoice_type = 'invoice'
+ AND flag_invoice_issued --BOOL
+;
+
+--L02_product
+CREATE OR REPLACE VIEW `L02.L02_product` AS
+SELECT
+ product_id
+ ,product_name
+ ,product_type
+ ,product_category
+FROM `L01.L01_product`
+--✅ze sloupečku product_category pouze product a rent => DISTINCT ale zobrazi pouze rent_equipment, equipment, customer_product,product_trial,else,fee
+WHERE product_category IN ('customer_product','rent_equipment') --❓❓
+;
+
+--L02_product_purchase
+CREATE OR REPLACE VIEW `L02.L02_product_purchase` AS
+SELECT
+ product_purchase_id
+ ,contract_id
+ ,product_id
+ ,create_date
+ ,product_valid_from
+ ,product_valid_to
+ ,price_wo_vat
+ --✅pokud je částka bez DPH menší nebo rovna 0, pak je výsledek 0; dopočítat 20% DPH k částce bez DPH
+ ,IF(price_wo_vat <= 0, 0,  price_wo_vat * 1.20 ) AS price_w_vat
+ ,unit
+ ,date_update
+ ,product_name
+ ,product_type
+ --✅zjistit, jestli je produkt neomezeně platný (zacatek platnosti od 31.12.2035) - dát flag (BOOL - TRUE, FALSE)
+ ,IF(product_valid_from = '2035-12-31', TRUE, FALSE) AS flag_unlimited_product
+FROM `L01.L01_product_purchase`
+--✅product_status nesmí být nulový a nesmí obsahovat canceled, canceled registration, disconnected
+--✅product_category obsahuje pouze customer_product,product_trial,else,equipment,rent_equipment,fee; vybrat pouze customer_product a rent_equipment
+WHERE product_status NOT IN ('canceled', 'canceled registration', 'disconnected')
+ AND product_status IS NOT NULL
+ AND product_category IN ('customer_product', 'rent_equipment')
+;
