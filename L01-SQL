@@ -1,0 +1,182 @@
+--L01_google_sheet
+--1️⃣L01_branch
+CREATE OR REPLACE VIEW `L01.L01_branch` AS
+SELECT
+  CAST(id_branch AS INT) AS branch_id
+  ,branch_name
+FROM `L0_google_sheet.branch`
+WHERE id_branch != "NULL"
+;
+
+--L01_crm
+--2️⃣L01_contract
+CREATE OR REPLACE VIEW `L01.L01_contract` AS
+SELECT
+--id_contract = PK, id_branch=FK
+  id_contract AS contract_id
+  ,id_branch AS branch_id
+  ,DATE(date_contract_valid_from, "Europe/Prague") AS contract_valid_from
+  --v L0 je date_contract_valid_to STR!!!
+  ,DATE(TIMESTAMP(date_contract_valid_to), "Europe/Prague") AS contract_valid_to
+  ,DATE(date_registered, "Europe/Prague") AS registred_date
+  ,DATE(date_signed, "Europe/Prague") AS signed_date
+  ,DATE(activation_process_date, "Europe/Prague") AS activation_process_date
+  ,DATE(prolongation_date, "Europe/Prague") AS prolongation_date
+  ,registration_end_reason
+  ,flag_prolongation
+  ,flag_send_inv_email AS flag_send_email
+  ,contract_status AS contract_status 
+  --w/o the "load_date" column in L01
+FROM `L0_crm.contract`
+QUALIFY ROW_NUMBER() OVER(PARTITION BY contract_id) = 1;
+
+--L01_accounting system
+--3️⃣L01_invoice
+CREATE OR REPLACE VIEW `L01.L01_invoice` AS
+SELECT
+--nejdříve PK a ID, pak datumy, číselné sloupce, textové popisky, logické sloupce 
+-- kdyz je uz datovy typ spravně, nemusím psát CAST(...AS)
+-- ✅id_invoice = PK, contract_id = FK, id_branch = FK
+  id_invoice AS invoice_id
+  ,id_invoice_old AS invoice_previous_id
+  ,invoice_id_contract AS contract_id
+  ,status AS invoice_status_id
+  ,id_branch AS branch_id
+  --podle excelu to má být UTC, ale tady mame CET
+  ,DATE(date, "Europe/Prague") AS date_issue
+  ,DATE(scadent, "Europe/Prague") AS due_date
+  ,DATE(date_paid, "Europe/Prague") AS paid_date
+  ,DATE(start_date, "Europe/Prague") AS start_date
+  ,DATE(end_date, "Europe/Prague") AS end_date
+  ,DATE(date_insert, "Europe/Prague") AS insert_date
+  ,DATE(date_update, "Europe/Prague") AS update_date
+  ,value AS amount_w_vat
+  ,payed AS amount_payed
+  ,flag_paid_currier
+--✅Invoice_type: 1 - invoice, 3 -  credit_note, 2 - return, 4 - other
+-- SQL (a konkrétně BigQuery) pochopí z konstrukce CASE, že výsledek jsou texty ('invoice', 'return'...) → a nastaví typ STRING automaticky.
+   ,CASE
+   WHEN invoice_type = 1 THEN "invoice"
+   WHEN invoice_type = 2 THEN "return"
+   WHEN invoice_type = 3 THEN "credit_note"
+   WHEN invoice_type = 4 THEN "other"
+ END AS invoice_type
+  ,number as invoice_number
+  ,value_storno AS return_w_vat
+--Invoice status. Invoice status < 100 have been issued. >= 100 - not issued ... 
+-- nebo IF(status IS NOT NULL AND status < 100, TRUE, FALSE) AS flag_invoice_issued
+  ,IF(status < 100, TRUE, FALSE) AS flag_invoice_issued
+FROM `L0_accounting_system.invoice`;
+-- WHERE není před QUALIFY (jsou to dvě různé věci)
+-- PARTITION BY id_status = rozdělí tabulku do skupin podle id_status.; ROW_NUMBER() = každému řádku ve skupině přiřadí pořadové číslo (1, 2, 3...); QUALIFY ... = 1 = vybere jen první řádek z každé skupiny → zbavíš se duplicit!; id_invoice = původní název z L0)
+
+--L01_accounting_system
+--4️⃣L01_invoice_load
+CREATE OR REPLACE VIEW `L01.L01_invoice_load` AS
+SELECT
+-- id_load = PK, id_contract, id_package, id_package_template, id_invoice = FK
+  id_load AS invoice_load_id
+  ,id_contract AS contract_id
+  --id_package, id_package_template v L0 je FLOAT, ale v excelu INT
+  ,id_package AS package_id
+  ,id_invoice AS invoice_id
+  ,id_package_template AS product_id
+  ,notlei AS price_wo_vat_usd
+  ,tva AS vat_rate
+  ,value AS price_w_vat_usd
+  ,payed AS paid_w_vat_usd
+  -- ✅"um" column = DISTINCT => "měsíce", "kus", "mesice", "den", "min", "0") => translation from CZE to ENG; no 'mesia','m?síce','m?si?1ce','měsice','mesiace' in DISTINCT (was in the Lana's code); nechano ('mesia','m?síce','m?si?1ce','měsice','mesiace','měsíce','mesice')  podle NIK opravy
+  ,CASE
+  -- GROUP BY um???
+    WHEN um IN ('mesia','m?síce','m?si?1ce','měsice','mesiace','měsíce','mesice')  THEN  'month'
+    WHEN um = "kus" THEN "item"
+    WHEN um = "den" THEN 'day'
+    WHEN um = '0' THEN NULL
+  ELSE um
+  END AS unit
+  ,quantity
+  ,DATE(TIMESTAMP(start_date), "Europe/Prague") as start_date
+  ,DATE(TIMESTAMP(end_date), "Europe/Prague") as end_date
+  ,DATE(TIMESTAMP(date_insert), "Europe/Prague") as date_insert
+  ,DATE(TIMESTAMP(date_update), "Europe/Prague") as date_update
+  -- ✅w/o "currency" and "load_date" columns in L01
+FROM `L0_accounting_system.invoice_load`;
+-- id_load = nazev sloupecku z L0
+
+--L01_google_sheet
+--5️⃣L01_product
+CREATE OR REPLACE VIEW `L01.L01_product` AS
+SELECT
+--id_product= PK
+  CAST(id_product AS INT) AS product_id
+  ,LOWER(name) AS product_name
+  ,LOWER(type) AS product_type
+  ,LOWER(category) AS product_category
+FROM `L0_google_sheet.product`
+WHERE id_product IS NOT NULL
+AND name IS NOT NULL
+QUALIFY ROW_NUMBER() OVER(PARTITION BY id_product) = 1;
+
+-- L01_google_sheets
+--7️⃣L01_status (L01 jsem si předtím založila jako dataset, tabulku status teď budu vytvářet očištěnou)
+-- z tabulky L0_google_sheet_status (z datasetu L0_google_sheet vybiram tabulku status, viz FROM) neco vybírám a ukládám do tabulky L01.L01_status jako view
+CREATE OR REPLACE VIEW `L01.L01_status` AS
+-- Vezmi sloupec id_status, převed' ho na číslo (pokud to jde, tj. např. z textu na číslo), a ulož ho jako nový sloupec s názvem product_status_id.
+-- Pokud id_status obsahuje hodnoty, které nejdou převést na číslo (např. ‘ABC’), převod může spadnout nebo vrátit NULL.
+SELECT
+--✅id_status = PK
+  CAST(id_status AS INT) AS product_status_id
+  -- Vezmi text ze sloupce status_name, převeď ho celý na malá písmena a pojmenuj ho product_status_name.
+  -- SQL totiž odlišuje mala a velka pismena = sjednoceni formatu textu.
+  ,LOWER(status_name) AS product_status_name
+  -- Vezmi sloupec date_update, převeď ho na datum a čas, přepni ho do pražského času, a pak z něj vytáhni jen datum – a to ulož jako product_status_update_date (podle dokumentu Nazvy sloupecku je to product_update_date!).
+  ,DATE(TIMESTAMP(date_update), 'Europe/Prague') AS product_update_date
+FROM `L0_google_sheet.status`
+-- Vezmi data ze zdroje, vyhoď ty, kde chybí ID nebo název stavu. Pokud je více záznamů se stejným ID stavu, nech si jen jeden z nich
+  -- Filtruje řádky a vyhazuje ty, kde chybí klíčové informace:id_status – unikátní ID stavu → nesmí chybět, status_name – název stavu → taky nesmí chybět.Tím se předejde chybám při převodech a duplicitám.
+WHERE id_status IS NOT NULL
+  AND status_name IS NOT NULL
+-- Vytváří číslování řádků pro každou skupinu se stejným product_status_id; Např. pokud existují dva řádky se product_status_id = 1, tak jednomu přiřadí 1, druhému 2. V rámci každé „skupiny“ přiřazuje pořadí.
+-- QUALIFY = pouze v BQ; QUALIFY ROW_NUMBER() ... = 1 - Uchová jen první řádek z každé skupiny product_status_id; Jinými slovy: odstraní duplicity podle product_status_id a nechá jen jeden záznam (první, podle řazení nebo náhodně, pokud není určeno).
+-- Výchozí řazení je náhodné, pokud se nespecifikuje ORDER BY, takže by bylo lepší to doplnit, např. podle date_update DESC, pokud chceš nejnovější záznam.
+--PARTITION BY product_status_id bylo původně, ale měl by se použít název sloupečku z L0, tudíž přepsáno
+-- ❓nechybi "ORDER BY date_update DESC"?
+QUALIFY ROW_NUMBER() OVER(PARTITION BY id_status) = 1
+;
+
+
+--L01_crm
+--6️⃣L01_product_purchase
+--podle Discordu budou zde JOIN
+CREATE OR REPLACE VIEW `L01.L01_product_purchase` AS
+SELECT
+--id_package = PK; id_contract, id_package_template, package_status, id_branch = FK
+  packages.id_package AS product_purchase_id
+  ,packages.id_contract AS contract_id
+  ,packages.id_package_template AS product_id
+  ,DATE(TIMESTAMP(packages.date_insert), "Europe/Prague") AS create_date
+  ,DATE(TIMESTAMP(packages.start_date), "Europe/Prague") AS product_valid_from
+  ,DATE(TIMESTAMP(packages.end_date), "Europe/Prague") AS product_valid_to
+  ,packages.fee AS price_wo_vat
+  ,DATE(TIMESTAMP(packages.date_update), "Europe/Prague") AS date_update
+  ,CASE
+    WHEN packages.measure_unit IN ("mesice", "měsíce") THEN 'month' 
+    WHEN packages.measure_unit = 'kus' THEN 'ITEM'
+    WHEN packages.measure_unit = 'den' THEN 'day'
+    WHEN packages.measure_unit = '0' THEN NULL
+  ELSE measure_unit END AS unit
+  ,packages.package_status AS product_status_id
+  ,status.product_status_name AS product_status
+  ,product.product_name
+  ,product.product_type
+  ,product.product_category
+  --✅no load_date and id_branch in L01 according to Lana's Word
+-- from hlavní tabulka, packages je alias (abych nemusela psát celou cestu k hlavní tabulce)
+FROM `L0_crm.product_purchase` packages -- ❓❓vysvětlit
+-- připojuje se tabulka status, která obsahuje product_status_id a product_status
+LEFT JOIN `L01.L01_status` status
+  ON packages.package_status = status.product_status_id
+-- Připojuje se tabulka L01_product, která obsahuje: product_name, product_type, product_category
+LEFT JOIN `L01.L01_product` product
+  ON packages.id_package_template = product.product_id;
+
