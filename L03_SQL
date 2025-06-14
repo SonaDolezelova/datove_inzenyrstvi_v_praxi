@@ -50,6 +50,7 @@ CREATE OR REPLACE VIEW `L03_snowflake.L03_product` AS
 SELECT
 --pořadí podle Světlaniny prezentace k L03
   L02_product.product_id
+  ,L02_product_purchase.product_purchase_id
   ,L02_product.product_name
   ,L02_product.product_type
   ,L02_product_purchase.product_valid_from
