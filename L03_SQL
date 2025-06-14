@@ -32,6 +32,7 @@ CREATE OR REPLACE VIEW `L03_snowflake.L03_invoice` AS
 SELECT
   L02_invoice.invoice_id
   ,L02_invoice.contract_id
+  ,L02_product_purchase.product_id
   ,L02_product_purchase.unit
   ,L02_invoice.amount_w_vat
   ,L02_invoice.return_w_vat
