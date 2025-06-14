@@ -1,0 +1,72 @@
+--L03_snowflake = vrstva pojmenovana podle typu datového modelu (snowflake schema)
+--L03_contract
+CREATE OR REPLACE VIEW `L03_snowflake.L03_contract` AS
+SELECT
+  contract_id
+  ,branch_id
+  ,contract_valid_from
+  ,contract_valid_to
+  ,registration_end_reason
+  --contract_duration = nový sloupeček
+  ,CASE
+  --WHEN contract_valid_to < contract_valid_from THEN NULL (pouze pokud bych chtela neplatna data ponechat, tj. oznacim je jako NULL)
+  --✅vypocitat hodnoty less than half year, less than 1 year, less than 2 years, more than 2 years z 'contract_valid_to' a 'contract_valid_from'
+    WHEN DATE_DIFF (contract_valid_to, contract_valid_from, MONTH) < 6 THEN 'less than half year'
+    WHEN DATE_DIFF (contract_valid_to, contract_valid_from, MONTH) < 12 THEN 'less than 1 year'
+    WHEN DATE_DIFF (contract_valid_to, contract_valid_from, MONTH) < 24 THEN 'less than 2 years'
+    ELSE 'more than 2 years'
+  END AS contract_duration 
+  --start_year_of_contract = nový sloupeček, pouze rok z contract_valid_from
+  ,EXTRACT(YEAR FROM contract_valid_from) as start_year_of_contract
+  ,contract_status
+  ,flag_prolongation
+FROM `L02.L02_contract`
+--odfiltrovat NULL datumy,nebo maji nesmyslny rozsah (contract valid to je mensi nez contract_valid_from)
+WHERE contract_valid_from IS NOT NULL
+  AND contract_valid_to IS NOT NULL
+  AND contract_valid_to >= contract_valid_from
+;
+
+--L03_invoice
+CREATE OR REPLACE VIEW `L03_snowflake.L03_invoice` AS
+SELECT
+  L02_invoice.invoice_id
+  ,L02_invoice.contract_id
+  ,L02_product_purchase.unit
+  ,L02_invoice.amount_w_vat
+  ,L02_invoice.return_w_vat
+  --✅TOTAL_PAID - total USD paid per invoice; nový sloupeček, amount_w_vat - return_w_vat; Agregace (SUM, GROUP BY, AVG, COUNT) se dělá až v reportu
+  ,(L02_invoice.amount_w_vat - L02_invoice.return_w_vat) as total_paid
+  ,L02_invoice.paid_date
+FROM `L02.L02_invoice` L02_invoice
+--duplikace??
+LEFT JOIN `L02.L02_product_purchase` L02_product_purchase
+ON L02_product_purchase.contract_id = L02_invoice.contract_id
+--WHERE L02_product_purchase.product_id IS NOT NULL --nemusi byt
+;
+
+--✅L03_product
+CREATE OR REPLACE VIEW `L03_snowflake.L03_product` AS
+SELECT
+--pořadí podle Světlaniny prezentace k L03
+  L02_product.product_id
+  ,L02_product.product_name
+  ,L02_product.product_type
+  ,L02_product_purchase.product_valid_from
+  ,L02_product_purchase.product_valid_to
+  ,L02_product_purchase.unit
+  ,L02_product_purchase.flag_unlimited_product
+FROM `L02.L02_product_purchase` L02_product_purchase
+--LEFT JOIN = nedohledatelný produkt (např. chyba v datech) neznamená, že nákup zmizí – jen budou sloupce z L02_product prázdné (NULL)
+LEFT JOIN `L02.L02_product` L02_product
+--cizi klic vlevo, primarni klic vpravo; hlavni tabulka je vlevo (napr. fakta); LEFT JOIN dimenze
+ON L02_product_purchase.product_id = L02_product.product_id
+;
+
+--✅L03_branch
+CREATE OR REPLACE VIEW `L03_snowflake.L03_branch` AS
+SELECT
+  branch_id
+  ,branch_name
+FROM `L02.L02_branch`
+;
