@@ -7,8 +7,9 @@ SELECT
   ,contract_valid_from
   ,contract_valid_to
   ,registration_end_reason
-  --contract_duration = nový sloupeček
-  ,CASE
+  ,contract_duration = nový sloupeček
+--tady prosím, odstranit zbytek, jelikož zde už přebíráš věci z L3 a nic už zde nedoděláváš, nepředěláváš. 
+ /* ,CASE
   --WHEN contract_valid_to < contract_valid_from THEN NULL (pouze pokud bych chtela neplatna data ponechat, tj. oznacim je jako NULL)
   --✅vypocitat hodnoty less than half year, less than 1 year, less than 2 years, more than 2 years z 'contract_valid_to' a 'contract_valid_from'
     WHEN DATE_DIFF (contract_valid_to, contract_valid_from, MONTH) < 6 THEN 'less than half year'
@@ -17,14 +18,15 @@ SELECT
     ELSE 'more than 2 years'
   END AS contract_duration 
   --start_year_of_contract = nový sloupeček, pouze rok z contract_valid_from
-  ,EXTRACT(YEAR FROM contract_valid_from) as start_year_of_contract
+  ,EXTRACT(YEAR FROM contract_valid_from) as start_year_of_contract */
   ,contract_status
   ,flag_prolongation
+  ,start_year_of_contract
 FROM `L02.L02_contract`
---odfiltrovat NULL datumy,nebo maji nesmyslny rozsah (contract valid to je mensi nez contract_valid_from)
+/*--odfiltrovat NULL datumy,nebo maji nesmyslny rozsah (contract valid to je mensi nez contract_valid_from)
 WHERE contract_valid_from IS NOT NULL
   AND contract_valid_to IS NOT NULL
-  AND contract_valid_to >= contract_valid_from
+  AND contract_valid_to >= contract_valid_from*/
 ;
 
 --L03_invoice
@@ -37,10 +39,10 @@ SELECT
   ,L02_invoice.amount_w_vat
   ,L02_invoice.return_w_vat
   --✅TOTAL_PAID - total USD paid per invoice; nový sloupeček, amount_w_vat - return_w_vat; Agregace (SUM, GROUP BY, AVG, COUNT) se dělá až v reportu
-  ,(L02_invoice.amount_w_vat - L02_invoice.return_w_vat) as total_paid
+  , total_paid
   ,L02_invoice.paid_date
 FROM `L02.L02_invoice` L02_invoice
---duplikace??
+--duplikace?? ANO, zde by mohl být i INNER JOIN
 LEFT JOIN `L02.L02_product_purchase` L02_product_purchase
 ON L02_product_purchase.contract_id = L02_invoice.contract_id
 --WHERE L02_product_purchase.product_id IS NOT NULL --nemusi byt
