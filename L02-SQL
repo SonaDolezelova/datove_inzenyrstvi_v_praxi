@@ -48,7 +48,7 @@ SELECT
     WHEN invoice.amount_w_vat <= 0 THEN 0
     WHEN invoice.amount_w_vat > 0 THEN amount_w_vat / 1.2
     END AS amount_wo_vat_usd
-  ,invoice.insert_date
+  ,invoice.insert_date AS insert_date
   ,invoice.update_date
   --✅každá faktura má pořadí v rámci smlouvy (contract_id) podle data vystavení (date_issue)
  ,ROW_NUMBER() OVER (PARTITION BY invoice.contract_id ORDER BY invoice.date_issue ASC) AS invoice_order
